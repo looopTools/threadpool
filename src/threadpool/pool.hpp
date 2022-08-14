@@ -9,22 +9,21 @@
 
 #include <functional>
 
+#include <chrono>
 
 namespace threadpool
 {
-    template<typename ResultType, typename FunctionType, typename TaskParamType>
+    template<typename ResultType, typename TaskParamType>
 class pool
 {
 
 public:
 
-    pool(size_t size, std::function<FunctionType> thread_function,  std::function<void(size_t, ResultType)> result_callback) : _size(size), _idle(size), _result_callback(result_callback)
-    {
-        _sleep_time = 1000;
-        
+    pool(size_t size, std::function<ResultType(TaskParamType)>& thread_function,  std::function<void(size_t, ResultType)>& result_callback) : _size(size), _idle(size), _result_callback(result_callback)
+    {   
         for (size_t i = 0; i < size; ++i)
         {
-            _pool.push_back(std::jthread([this, thread_function](){
+            _pool.push_back(std::thread([this, thread_function, &result_callback, i](){
 
                 do
                 {
@@ -33,22 +32,30 @@ public:
 
                     {
                         std::lock_guard<std::mutex> lock(this->_mutex);
-                        if (!this->task_queue.empty())
+                        if (!this->_task_queue.empty())
                         {
                             task_found = true;
-                            task = this->task_queue.front();
-                            this->task_queue.pop();
+                            task = this->_task_queue.front();
+                            this->_task_queue.pop();
+                            this->_idle = this->_idle - 1;
                         }
                     }
 
                     if (task_found)
                     {
-                        auto result = thread_function(task);
+                        ResultType result = thread_function(task);
+                        result_callback(i, result);
                     }
 
-                    std::this_thread::sleep_for(200ms); /// provid a default and chrono literals
+                    {
+                        std::lock_guard<std::mutex> lock(this->_mutex);
+                        this->_idle = this->_idle + 1;
+                    }
+                    using namespace std::chrono_literals;
+                    std::this_thread::sleep_for(100ms); /// provid a default and chrono literals
                 }
-                while(!this->_stop_token.stop_requested);
+                while(!this->_stop);
+                //while(!this->_stop_token.stop_requested);
             }));
         }
     }
@@ -60,8 +67,17 @@ public:
     
     void stop()
     {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _stop_token.request_stop();        
+
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            //_stop_token.request_stop();
+            _stop = true;
+        }
+        for(auto& thread : _pool)
+        {
+            thread.join();
+        }
+        
     }
 
     // Change to return task id
@@ -71,26 +87,22 @@ public:
         _task_queue.push(task);
     }
 
-    // Change to chrono literals and stuff 
-    void sleep_time(size_t sleep_time)
+    size_t size() const {return _size;}
+
+
+    static unsigned int hardware_concurrency() noexcept
     {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _sleep_time = sleep_time;
-            
+        return std::thread::hardware_concurrency();
     }
-
-    size_t sleep_time() {return _sleep_time;}
-
-    
 
 private:
     size_t _size;
     size_t _idle;
 
-    size_t _sleep_time;
-
-    std::stop_token _stop_token; 
-    std::vector<jthread> _pool;
+    // Move to using stop token 
+    // std::stop_token _stop_token;
+    bool _stop; 
+    std::vector<std::thread> _pool;
 
     std::mutex _mutex;
 

@@ -5,6 +5,8 @@ We see this as a proposal for how standard library (STL) threadpool could/should
 
 ## Why jthread
 
+*Currently:* Clang does not support JTHREAD by we will move to this when ready. 
+
 `jthread` is the future and we need threadpool to be future proof that is why we have chosen `jthread` over traditional `thread`.
 
 ### C++20 and only
